@@ -1,0 +1,125 @@
+# HAProxy Configuration for PostgreSQL Multi-Master Cluster
+# Managed by Ansible - Do not edit manually
+
+#---------------------------------------------------------------------
+# Global settings
+#---------------------------------------------------------------------
+global
+    log /dev/log local0
+    log /dev/log local1 notice
+    chroot /var/lib/haproxy
+    stats socket /run/haproxy/admin.sock mode 660 level admin expose-fd listeners
+    stats timeout 30s
+    user haproxy
+    group haproxy
+    daemon
+    
+    # SSL/TLS settings (if needed in future)
+    # ssl-default-bind-ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256
+    # ssl-default-bind-options no-sslv3 no-tlsv10 no-tlsv11
+    
+    # Performance tuning
+    maxconn 4096
+    tune.ssl.default-dh-param 2048
+
+#---------------------------------------------------------------------
+# Default settings
+#---------------------------------------------------------------------
+defaults
+    log     global
+    mode    tcp
+    option  tcplog
+    option  dontlognull
+    option  redispatch
+    retries 3
+    timeout connect 10s
+    timeout client  30m
+    timeout server  30m
+    timeout check   5s
+    maxconn 3000
+
+#---------------------------------------------------------------------
+# Statistics page
+#---------------------------------------------------------------------
+listen stats
+    bind *:{{ haproxy_stats_port }}
+    mode http
+    stats enable
+    stats uri /stats
+    stats refresh 10s
+    stats show-legends
+    stats show-node
+    stats auth {{ haproxy_stats_user }}:{{ haproxy_stats_password }}
+    stats admin if TRUE
+
+#---------------------------------------------------------------------
+# PostgreSQL Load Balancing - Round Robin for Multi-Master
+#---------------------------------------------------------------------
+listen postgres_cluster
+    bind *:{{ haproxy_postgres_port }}
+    mode tcp
+    option tcplog
+    option tcp-check
+    
+    # Balance method - round robin for multi-master where all nodes accept writes
+    balance roundrobin
+    
+    # TCP health check for PostgreSQL
+    # Uses a simple TCP connection check
+    tcp-check connect
+    
+    # Alternative: Use PostgreSQL protocol health check
+    # Requires health check user with minimal privileges
+    # option httpchk
+    # http-check expect status 200
+    
+    # Default server settings
+    default-server inter 3s fastinter 1s downinter 5s rise 3 fall 3 on-marked-down shutdown-sessions
+    
+    # PostgreSQL backend servers
+{% for host in groups['postgres'] %}
+    server {{ hostvars[host]['inventory_hostname'] }} {{ hostvars[host]['private_ip'] }}:{{ postgres_port }} check weight 100
+{% endfor %}
+
+#---------------------------------------------------------------------
+# PostgreSQL Read-Only Load Balancing (optional - for read scaling)
+#---------------------------------------------------------------------
+listen postgres_read
+    bind *:5001
+    mode tcp
+    option tcplog
+    option tcp-check
+    
+    # Balance method for reads
+    balance leastconn
+    
+    tcp-check connect
+    
+    default-server inter 3s fastinter 1s downinter 5s rise 3 fall 3
+    
+{% for host in groups['postgres'] %}
+    server {{ hostvars[host]['inventory_hostname'] }}-read {{ hostvars[host]['private_ip'] }}:{{ postgres_port }} check weight 100
+{% endfor %}
+
+#---------------------------------------------------------------------
+# PostgreSQL with Session Affinity (optional - for stateful connections)
+#---------------------------------------------------------------------
+listen postgres_sticky
+    bind *:5002
+    mode tcp
+    option tcplog
+    option tcp-check
+    
+    # Stick table for session persistence
+    stick-table type ip size 100k expire 30m
+    stick on src
+    
+    balance roundrobin
+    
+    tcp-check connect
+    
+    default-server inter 3s fastinter 1s downinter 5s rise 3 fall 3
+    
+{% for host in groups['postgres'] %}
+    server {{ hostvars[host]['inventory_hostname'] }}-sticky {{ hostvars[host]['private_ip'] }}:{{ postgres_port }} check weight 100
+{% endfor %}

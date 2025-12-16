@@ -1,0 +1,25 @@
+[Unit]
+Description=RepMgr Daemon for PostgreSQL {{ postgresql_version }}
+Documentation=https://repmgr.org/docs/current/
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=postgres
+Group=postgres
+ExecStart=/usr/bin/repmgrd -f /etc/repmgr/repmgr.conf --pid-file=/var/run/repmgr/repmgrd.pid --daemonize=false
+ExecReload=/bin/kill -HUP $MAINPID
+PIDFile=/var/run/repmgr/repmgrd.pid
+RuntimeDirectory=repmgr
+RuntimeDirectoryMode=0755
+Restart=on-failure
+RestartSec=5
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=repmgrd
+
+[Install]
+WantedBy=multi-user.target

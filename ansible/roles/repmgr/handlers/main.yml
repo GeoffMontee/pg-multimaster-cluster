@@ -1,0 +1,16 @@
+---
+# Handlers for RepMgr role
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart repmgrd
+  ansible.builtin.systemd:
+    name: repmgrd
+    state: restarted
+
+- name: Stop repmgrd
+  ansible.builtin.systemd:
+    name: repmgrd
+    state: stopped

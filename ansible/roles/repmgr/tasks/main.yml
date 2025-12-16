@@ -1,0 +1,92 @@
+---
+# RepMgr Installation and Configuration
+# Note: RepMgr is typically used for streaming replication failover management
+# In this multi-master setup, it provides cluster monitoring capabilities
+
+- name: Install RepMgr
+  ansible.builtin.apt:
+    name:
+      - "postgresql-{{ postgresql_version }}-repmgr"
+    state: present
+    update_cache: true
+
+- name: Create RepMgr configuration directory
+  ansible.builtin.file:
+    path: /etc/repmgr
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0755'
+
+- name: Configure repmgr.conf
+  ansible.builtin.template:
+    src: repmgr.conf.j2
+    dest: /etc/repmgr/repmgr.conf
+    owner: postgres
+    group: postgres
+    mode: '0644'
+  notify: Restart repmgrd
+
+- name: Create repmgr log directory
+  ansible.builtin.file:
+    path: /var/log/repmgr
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0755'
+
+- name: Create .pgpass file for postgres user
+  ansible.builtin.template:
+    src: pgpass.j2
+    dest: /var/lib/postgresql/.pgpass
+    owner: postgres
+    group: postgres
+    mode: '0600'
+
+- name: Create repmgr extension in repmgr database
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_ext:
+    name: repmgr
+    db: "{{ replication_db }}"
+    state: present
+
+- name: Check if node is registered
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    cmd: >
+      psql -d {{ replication_db }} -t -c
+      "SELECT count(*) FROM repmgr.nodes WHERE node_id = {{ node_id }};"
+  register: node_registered
+  changed_when: false
+  failed_when: false
+
+- name: Register node with repmgr (primary behavior for multi-master)
+  become: true
+  become_user: postgres
+  ansible.builtin.command:
+    cmd: >
+      repmgr -f /etc/repmgr/repmgr.conf primary register --force
+  when: node_registered.stdout | trim | int == 0
+  register: repmgr_register
+  changed_when: "'successfully registered' in repmgr_register.stdout"
+  failed_when: false
+
+- name: Create repmgrd systemd service
+  ansible.builtin.template:
+    src: repmgrd.service.j2
+    dest: /etc/systemd/system/repmgrd.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Restart repmgrd
+
+- name: Enable and start repmgrd service
+  ansible.builtin.systemd:
+    name: repmgrd
+    state: started
+    enabled: true
+    daemon_reload: true

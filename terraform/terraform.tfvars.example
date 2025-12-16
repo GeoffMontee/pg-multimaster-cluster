@@ -1,0 +1,37 @@
+# Terraform Variables Example
+# Copy this file to terraform.tfvars and customize as needed
+
+# Owner tag (REQUIRED by AWS account policy)
+owner = "your-name-or-email"
+
+# AWS Region
+aws_region = "us-east-1"
+
+# Environment
+environment = "dev"
+
+# Project name (used in resource naming)
+project_name = "pg-ha"
+
+# VPC Configuration
+vpc_cidr = "10.0.0.0/16"
+public_subnet_cidrs  = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+private_subnet_cidrs = ["10.0.10.0/24", "10.0.20.0/24", "10.0.30.0/24"]
+
+# Instance Types
+postgres_instance_type = "t3.medium"  # Adjust based on workload
+haproxy_instance_type  = "t3.small"
+
+# Storage Configuration
+postgres_root_volume_size = 30   # GB
+postgres_data_volume_size = 100  # GB - Adjust based on data size
+
+# Network Access Control
+# WARNING: Restrict these in production!
+allowed_ssh_cidrs      = ["0.0.0.0/0"]  # Replace with your IP/CIDR
+allowed_postgres_cidrs = ["0.0.0.0/0"]  # Replace with application CIDR
+
+# Ports
+postgres_port       = 5432
+haproxy_postgres_port = 5000
+haproxy_stats_port  = 7000

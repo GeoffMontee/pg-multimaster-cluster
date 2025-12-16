@@ -1,0 +1,19 @@
+# PostgreSQL password file
+# Managed by Ansible - Do not edit manually
+# Format: hostname:port:database:username:password
+
+# Local connections
+localhost:{{ postgres_port }}:*:{{ replication_user }}:{{ replication_password }}
+127.0.0.1:{{ postgres_port }}:*:{{ replication_user }}:{{ replication_password }}
+
+# Cluster node connections for replication
+{% for host in groups['postgres'] %}
+{{ hostvars[host]['private_ip'] }}:{{ postgres_port }}:*:{{ replication_user }}:{{ replication_password }}
+{{ hostvars[host]['inventory_hostname'] }}:{{ postgres_port }}:*:{{ replication_user }}:{{ replication_password }}
+{% endfor %}
+
+# pglogical user connections
+{% for host in groups['postgres'] %}
+{{ hostvars[host]['private_ip'] }}:{{ postgres_port }}:*:{{ pglogical_user }}:{{ pglogical_password }}
+{{ hostvars[host]['inventory_hostname'] }}:{{ postgres_port }}:*:{{ pglogical_user }}:{{ pglogical_password }}
+{% endfor %}

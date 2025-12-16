@@ -1,0 +1,78 @@
+---
+# HAProxy Installation and Configuration for PostgreSQL Load Balancing
+
+- name: Install HAProxy
+  ansible.builtin.apt:
+    name:
+      - haproxy
+    state: present
+    update_cache: true
+
+- name: Create HAProxy configuration directory
+  ansible.builtin.file:
+    path: /etc/haproxy
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Configure HAProxy
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    owner: root
+    group: root
+    mode: '0644'
+    validate: haproxy -c -f %s
+  notify: Restart haproxy
+
+- name: Create HAProxy error pages directory
+  ansible.builtin.file:
+    path: /etc/haproxy/errors
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Enable HAProxy in defaults
+  ansible.builtin.lineinfile:
+    path: /etc/default/haproxy
+    regexp: '^ENABLED='
+    line: 'ENABLED=1'
+    create: true
+    mode: '0644'
+
+- name: Enable and start HAProxy
+  ansible.builtin.systemd:
+    name: haproxy
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for HAProxy to be ready
+  ansible.builtin.wait_for:
+    port: "{{ haproxy_postgres_port }}"
+    delay: 5
+    timeout: 60
+
+- name: Wait for HAProxy stats to be ready
+  ansible.builtin.wait_for:
+    port: "{{ haproxy_stats_port }}"
+    delay: 2
+    timeout: 30
+
+- name: Test PostgreSQL connectivity through HAProxy
+  ansible.builtin.command:
+    cmd: >
+      nc -zv localhost {{ haproxy_postgres_port }}
+  register: haproxy_test
+  changed_when: false
+  failed_when: haproxy_test.rc != 0
+
+- name: Display HAProxy status
+  ansible.builtin.debug:
+    msg: |
+      HAProxy is running and listening on:
+      - PostgreSQL port: {{ haproxy_postgres_port }}
+      - Stats port: {{ haproxy_stats_port }}
+      Stats URL: http://{{ ansible_host }}:{{ haproxy_stats_port }}/stats

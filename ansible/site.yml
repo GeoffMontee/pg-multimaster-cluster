@@ -1,0 +1,66 @@
+---
+# Main Ansible Playbook for PostgreSQL Multi-Master HA Cluster
+# Run with: ansible-playbook -i inventory/hosts.yml site.yml
+
+- name: Common setup for all nodes
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - common
+
+- name: Install and configure PostgreSQL 17
+  hosts: postgres
+  become: true
+  roles:
+    - postgresql
+
+- name: Install and configure RepMgr
+  hosts: postgres
+  become: true
+  roles:
+    - repmgr
+
+- name: Configure pglogical multi-master replication
+  hosts: postgres
+  become: true
+  serial: 1  # Configure one at a time to prevent race conditions
+  roles:
+    - pglogical
+
+- name: Setup pglogical subscriptions (run after all nodes are providers)
+  hosts: postgres
+  become: true
+  roles:
+    - role: pglogical_subscriptions
+      tags: subscriptions
+
+- name: Install and configure HAProxy
+  hosts: haproxy
+  become: true
+  roles:
+    - haproxy
+
+- name: Final validation
+  hosts: all
+  become: true
+  tasks:
+    - name: Validate PostgreSQL is running
+      ansible.builtin.systemd:
+        name: postgresql
+        state: started
+      when: inventory_hostname in groups['postgres']
+
+    - name: Validate HAProxy is running
+      ansible.builtin.systemd:
+        name: haproxy
+        state: started
+      when: inventory_hostname in groups['haproxy']
+
+    - name: Check PostgreSQL connectivity from HAProxy
+      ansible.builtin.wait_for:
+        host: "{{ hostvars[item]['private_ip'] }}"
+        port: "{{ postgres_port }}"
+        timeout: 30
+      loop: "{{ groups['postgres'] }}"
+      when: inventory_hostname in groups['haproxy']

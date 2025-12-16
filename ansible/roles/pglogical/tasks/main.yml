@@ -1,0 +1,134 @@
+---
+# pglogical Multi-Master Replication Setup - Provider Configuration
+# This role sets up each node as a pglogical provider
+
+- name: Ensure PostgreSQL is running
+  ansible.builtin.systemd:
+    name: postgresql
+    state: started
+
+- name: Wait for PostgreSQL to be ready
+  ansible.builtin.wait_for:
+    port: "{{ postgres_port }}"
+    delay: 2
+    timeout: 30
+
+- name: Create pglogical extension in application database
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_ext:
+    name: pglogical
+    db: "{{ app_db_name }}"
+    state: present
+
+- name: Check if pglogical node exists
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ app_db_name }}"
+    query: "SELECT count(*) as cnt FROM pglogical.node WHERE node_name = %s"
+    positional_args:
+      - "{{ inventory_hostname }}"
+  register: pglogical_node_check
+
+- name: Create pglogical node
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ app_db_name }}"
+    query: >
+      SELECT pglogical.create_node(
+        node_name := %s,
+        dsn := %s
+      )
+    positional_args:
+      - "{{ inventory_hostname }}"
+      - "host={{ private_ip }} port={{ postgres_port }} dbname={{ app_db_name }} user={{ pglogical_user }} password={{ pglogical_password }}"
+  when: pglogical_node_check.query_result[0].cnt == 0
+  register: create_node_result
+  failed_when: false
+
+- name: Create sample table for replication testing
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ app_db_name }}"
+    query: |
+      CREATE TABLE IF NOT EXISTS sample_data (
+        id SERIAL PRIMARY KEY,
+        data TEXT,
+        node_origin VARCHAR(50) DEFAULT '{{ inventory_hostname }}',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      );
+
+      -- Add trigger for updated_at
+      CREATE OR REPLACE FUNCTION update_updated_at()
+      RETURNS TRIGGER AS $$
+      BEGIN
+        NEW.updated_at = CURRENT_TIMESTAMP;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS sample_data_updated_at ON sample_data;
+      CREATE TRIGGER sample_data_updated_at
+        BEFORE UPDATE ON sample_data
+        FOR EACH ROW
+        EXECUTE FUNCTION update_updated_at();
+
+- name: Check if replication set exists
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ app_db_name }}"
+    query: "SELECT count(*) as cnt FROM pglogical.replication_set WHERE set_name = 'default'"
+  register: repset_check
+
+- name: Add sample_data table to default replication set
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ app_db_name }}"
+    query: >
+      SELECT pglogical.replication_set_add_table(
+        set_name := 'default',
+        relation := 'sample_data',
+        synchronize_data := true,
+        columns := NULL,
+        row_filter := NULL
+      )
+  when: repset_check.query_result[0].cnt > 0
+  register: add_table_result
+  failed_when: false
+  changed_when: "'already' not in (add_table_result.msg | default(''))"
+
+- name: Grant permissions to pglogical user on application database
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_privs:
+    db: "{{ app_db_name }}"
+    privs: ALL
+    type: database
+    role: "{{ pglogical_user }}"
+
+- name: Grant permissions on schema public
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_privs:
+    db: "{{ app_db_name }}"
+    privs: ALL
+    type: schema
+    objs: public
+    role: "{{ pglogical_user }}"
+
+- name: Grant permissions on all tables
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ app_db_name }}"
+    query: |
+      GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO {{ pglogical_user }};
+      GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO {{ pglogical_user }};
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO {{ pglogical_user }};
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO {{ pglogical_user }};

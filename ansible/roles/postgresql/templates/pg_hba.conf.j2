@@ -1,0 +1,43 @@
+# PostgreSQL Client Authentication Configuration File
+# Managed by Ansible - Do not edit manually
+
+# TYPE  DATABASE        USER            ADDRESS                 METHOD
+
+# Local connections
+local   all             postgres                                peer
+local   all             all                                     peer
+
+# IPv4 local connections (loopback)
+host    all             all             127.0.0.1/32            scram-sha-256
+
+# IPv6 local connections (loopback)
+host    all             all             ::1/128                 scram-sha-256
+
+# Replication connections from cluster nodes
+{% for host in groups['postgres'] %}
+host    replication     {{ replication_user }}    {{ hostvars[host]['private_ip'] }}/32    scram-sha-256
+host    all             {{ replication_user }}    {{ hostvars[host]['private_ip'] }}/32    scram-sha-256
+{% endfor %}
+
+# pglogical connections from cluster nodes
+{% for host in groups['postgres'] %}
+host    {{ app_db_name }}    {{ pglogical_user }}    {{ hostvars[host]['private_ip'] }}/32    scram-sha-256
+host    all                  {{ pglogical_user }}    {{ hostvars[host]['private_ip'] }}/32    scram-sha-256
+{% endfor %}
+
+# HAProxy health check connections
+{% for host in groups['haproxy'] %}
+host    all             {{ healthcheck_user }}    {{ hostvars[host]['private_ip'] }}/32    scram-sha-256
+{% endfor %}
+
+# Application connections from HAProxy
+{% for host in groups['haproxy'] %}
+host    {{ app_db_name }}    {{ app_db_user }}    {{ hostvars[host]['private_ip'] }}/32    scram-sha-256
+host    all                  all                  {{ hostvars[host]['private_ip'] }}/32    scram-sha-256
+{% endfor %}
+
+# VPC-wide access (adjust CIDR as needed)
+host    all             all             10.0.0.0/16             scram-sha-256
+
+# Deny all other connections (explicit deny - good practice)
+# host    all             all             0.0.0.0/0               reject

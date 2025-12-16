@@ -1,0 +1,53 @@
+# RepMgr Configuration
+# Managed by Ansible - Do not edit manually
+
+# Node identification
+node_id={{ node_id }}
+node_name='{{ inventory_hostname }}'
+conninfo='host={{ private_ip }} port={{ postgres_port }} user={{ replication_user }} dbname={{ replication_db }} connect_timeout=2'
+data_directory='/pgdata/{{ postgresql_version }}/main'
+
+# Logging
+log_level=INFO
+log_facility=STDERR
+log_file='/var/log/repmgr/repmgrd.log'
+log_status_interval=300
+
+# repmgrd daemon settings
+repmgrd_service_start_command='sudo systemctl start repmgrd'
+repmgrd_service_stop_command='sudo systemctl stop repmgrd'
+
+# Service control commands
+service_start_command='sudo systemctl start postgresql'
+service_stop_command='sudo systemctl stop postgresql'
+service_restart_command='sudo systemctl restart postgresql'
+service_reload_command='sudo systemctl reload postgresql'
+
+# Monitoring settings
+# Note: In a pglogical multi-master setup, these are primarily for monitoring
+monitoring_history=yes
+monitor_interval_secs=5
+reconnect_attempts=6
+reconnect_interval=10
+
+# Connection check settings
+connection_check_type=ping
+async_query_timeout=60
+
+# Failover settings (less relevant for multi-master but configured for monitoring)
+failover=manual
+promote_command='repmgr standby promote -f /etc/repmgr/repmgr.conf'
+follow_command='repmgr standby follow -f /etc/repmgr/repmgr.conf --upstream-node-id=%n'
+
+# SSH settings for switchover operations
+ssh_options='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+# Location of repmgr binaries
+pg_bindir='/usr/lib/postgresql/{{ postgresql_version }}/bin'
+
+# Priority for failover elections
+priority={{ repmgr_node_priority | default(100) }}
+
+# Event notifications (optional - configure as needed)
+# event_notification_command='/path/to/notify-script.sh %n %e %s "%t" "%d"'
+# event_notifications=repmgrd_start,repmgrd_shutdown,standby_promote,standby_follow

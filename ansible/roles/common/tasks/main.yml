@@ -1,0 +1,91 @@
+---
+# Common role - base configuration for all nodes
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install common packages
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+      - software-properties-common
+      - python3-pip
+      - python3-psycopg2
+      - acl
+      - htop
+      - vim
+      - net-tools
+    state: present
+
+- name: Set timezone
+  community.general.timezone:
+    name: UTC
+
+- name: Configure sysctl for PostgreSQL
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    sysctl_file: /etc/sysctl.d/99-postgresql.conf
+    reload: true
+  loop:
+    - { name: 'vm.swappiness', value: '10' }
+    - { name: 'vm.overcommit_memory', value: '2' }
+    - { name: 'vm.overcommit_ratio', value: '80' }
+    - { name: 'net.core.somaxconn', value: '65535' }
+    - { name: 'net.ipv4.tcp_max_syn_backlog', value: '65535' }
+  when: inventory_hostname in groups['postgres']
+
+- name: Configure /etc/hosts with all cluster nodes
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: ".*{{ hostvars[item]['inventory_hostname'] }}$"
+    line: "{{ hostvars[item]['private_ip'] }} {{ hostvars[item]['inventory_hostname'] }}"
+    state: present
+  loop: "{{ groups['all'] }}"
+
+- name: Ensure data volume is mounted (PostgreSQL nodes only)
+  when: inventory_hostname in groups['postgres']
+  block:
+    - name: Check if data volume exists
+      ansible.builtin.stat:
+        path: /dev/nvme1n1
+      register: data_volume_nvme
+
+    - name: Check alternate device name
+      ansible.builtin.stat:
+        path: /dev/xvdf
+      register: data_volume_xvdf
+
+    - name: Set data volume device name
+      ansible.builtin.set_fact:
+        data_volume_device: "{{ '/dev/nvme1n1' if data_volume_nvme.stat.exists else '/dev/xvdf' }}"
+
+    - name: Create filesystem on data volume
+      community.general.filesystem:
+        fstype: xfs
+        dev: "{{ data_volume_device }}"
+      when: data_volume_nvme.stat.exists or data_volume_xvdf.stat.exists
+
+    - name: Create mount point
+      ansible.builtin.file:
+        path: /pgdata
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Mount data volume
+      ansible.posix.mount:
+        path: /pgdata
+        src: "{{ data_volume_device }}"
+        fstype: xfs
+        opts: defaults,noatime
+        state: mounted
+      when: data_volume_nvme.stat.exists or data_volume_xvdf.stat.exists

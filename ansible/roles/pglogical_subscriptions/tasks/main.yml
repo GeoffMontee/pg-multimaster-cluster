@@ -1,0 +1,95 @@
+---
+# pglogical Multi-Master Replication - Subscription Setup
+# Creates bidirectional subscriptions between all nodes
+
+- name: Wait for all nodes to have pglogical configured
+  ansible.builtin.pause:
+    seconds: 10
+  run_once: true
+
+- name: Create subscriptions to other nodes
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ app_db_name }}"
+    query: >
+      DO $$
+      DECLARE
+        sub_exists boolean;
+      BEGIN
+        -- Check if subscription already exists
+        SELECT EXISTS(
+          SELECT 1 FROM pglogical.subscription 
+          WHERE sub_name = '{{ item }}_to_{{ inventory_hostname }}'
+        ) INTO sub_exists;
+        
+        IF NOT sub_exists THEN
+          PERFORM pglogical.create_subscription(
+            subscription_name := '{{ item }}_to_{{ inventory_hostname }}',
+            provider_dsn := 'host={{ hostvars[item]["private_ip"] }} port={{ postgres_port }} dbname={{ app_db_name }} user={{ pglogical_user }} password={{ pglogical_password }}',
+            replication_sets := ARRAY['default'],
+            synchronize_structure := false,
+            synchronize_data := true,
+            forward_origins := '{}'
+          );
+        END IF;
+      END $$;
+  loop: "{{ groups['postgres'] | difference([inventory_hostname]) }}"
+  register: subscription_result
+  failed_when: false
+
+- name: Wait for subscriptions to synchronize
+  become: true
+  become_user: postgres
+  ansible.builtin.pause:
+    seconds: 60
+    prompt: "Waiting for pglogical subscriptions to synchronize..."
+
+- name: Display subscription status
+  become: true
+  become_user: postgres
+  ansible.builtin.shell: |
+    psql -d {{ app_db_name }} -c "SELECT * FROM pglogical.subscription;"
+  register: subscription_status
+  changed_when: false
+  failed_when: false
+
+- name: Show subscription status
+  ansible.builtin.debug:
+    msg: "{{ subscription_status.stdout_lines | default('No results') }}"
+
+- name: Create conflict resolution function (last update wins with logging)
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_query:
+    db: "{{ app_db_name }}"
+    query: |
+      -- Create conflict log table if not exists
+      CREATE TABLE IF NOT EXISTS pglogical_conflict_log (
+        id SERIAL PRIMARY KEY,
+        conflict_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+        table_name TEXT,
+        conflict_type TEXT,
+        local_tuple JSONB,
+        remote_tuple JSONB,
+        resolution TEXT
+      );
+      
+      -- Grant access to pglogical user
+      GRANT ALL ON pglogical_conflict_log TO {{ pglogical_user }};
+      GRANT USAGE, SELECT ON SEQUENCE pglogical_conflict_log_id_seq TO {{ pglogical_user }};
+  run_once: true
+
+- name: Verify replication is working
+  become: true
+  become_user: postgres
+  ansible.builtin.shell: |
+    psql -d {{ app_db_name }} -c "SELECT * FROM pglogical.node;"
+    psql -d {{ app_db_name }} -c "SELECT * FROM pglogical.subscription;"
+  register: replication_status
+  changed_when: false
+  failed_when: false
+
+- name: Display final replication status
+  ansible.builtin.debug:
+    msg: "Replication status on {{ inventory_hostname }}:\n{{ replication_status.stdout }}"

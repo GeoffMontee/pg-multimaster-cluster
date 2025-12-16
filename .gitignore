@@ -1,0 +1,20 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+terraform.tfvars
+crash.log
+
+# Ansible
+ansible/ssh_key.pem
+ansible/inventory/hosts.yml
+*.retry
+/tmp/ansible_facts/
+
+# Secrets
+*.pem
+*.key
+
+# OS
+.DS_Store
